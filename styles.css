@@ -3,7 +3,7 @@
   --bg:#f4f6f5; --surface:#ffffff; --fg:#13201c; --muted:#5a6964; --line:#d9e1de;
   --band:#0d1f1a; --band-fg:#e9f3ef; --band-muted:#94aea5;
   --accent:#12866b; --accent-strong:#0b6a54; --accent-soft:#ddf2ea; --on-accent:#ffffff;
-  --l-found:#3d5bd9; --l-app:#12866b; --l-ops:#c0571b;
+  --l-found:#3d5bd9; --l-app:#12866b; --l-ops:#c0571b; --l-mon:#8a3fb5; --l-big:#8a6a00;
   --ok:#1d8a4a; --ok-soft:#e2f4e8; --warn:#a86a00; --warn-soft:#fbf0d9; --bad:#c23a2c; --bad-soft:#fbe7e4;
   --f-display:"Bricolage Grotesque","Helvetica Neue",Arial,sans-serif;
   --f-body:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
@@ -14,7 +14,7 @@
   --bg:#0e1513; --surface:#161f1c; --fg:#e5ece9; --muted:#97a9a3; --line:#2a3632;
   --band:#08100d; --band-fg:#e9f3ef; --band-muted:#8aa69c;
   --accent:#43c9a0; --accent-strong:#6fdcba; --accent-soft:#143229; --on-accent:#08100d;
-  --l-found:#8fa5ff; --l-app:#43c9a0; --l-ops:#f29a5e;
+  --l-found:#8fa5ff; --l-app:#43c9a0; --l-ops:#f29a5e; --l-mon:#c99bf0; --l-big:#e3c15c;
   --ok:#5fd18e; --ok-soft:#14301f; --warn:#f0b54a; --warn-soft:#33270f; --bad:#ff8b7b; --bad-soft:#3a1c18;
   color-scheme:dark}}
 
@@ -80,11 +80,11 @@ input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 /* Dashboard */
 .quizcard{display:grid;grid-template-columns:1fr auto;gap:18px;align-items:end}
 @media (max-width:600px){.quizcard{grid-template-columns:1fr}}
-.path{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.path{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 .lay{border:1px solid var(--line);border-top:4px solid var(--c);border-radius:12px;padding:12px;min-width:0}
 .lay b{font-family:var(--f-display);font-size:16px;display:block}
 .lay p{margin:4px 0 0;font-size:13px;color:var(--muted)}
-@media (max-width:560px){.path{grid-template-columns:1fr}}
+@media (max-width:560px){.path{grid-template-columns:1fr 1fr}}
 .video{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px dashed var(--line);border-radius:12px;color:var(--fg);text-decoration:none}
 .video:hover{border-color:var(--accent)}
 .video .play{width:34px;height:34px;flex:none;border-radius:50%;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;font-size:13px}

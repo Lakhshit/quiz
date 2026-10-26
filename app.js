@@ -207,12 +207,12 @@ function reportView(id, fresh) {
   if (!a) return view(`<section class="card"><h2>Report not found</h2><p class="muted" style="margin:0">Reports are saved in the browser where the quiz was taken.</p><a class="btn ghost" href="#/">Back to my quizzes</a></section>`);
   const quiz = quizById(a.quizId);
   const C = 2 * Math.PI * 50, col = passed(a.pct) ? "var(--ok)" : a.pct >= 60 ? "var(--l-ops)" : "var(--bad)";
-  const v = passed(a.pct) ? ["Passed.", "Strong grasp of how the pieces connect."] : a.pct >= 60 ? ["Nearly there.", "Rewatch the moments listed for the questions you missed, then retake."] : ["Worth a second watch.", "Use the video times below to review, then retake."];
+  const v = passed(a.pct) ? ["Passed.", "Strong grasp of how the pieces connect."] : a.pct >= 60 ? ["Nearly there.", "Review the questions you missed below, then retake."] : ["Worth a second watch.", "Rewatch the primer, then retake."];
   const rows = quiz ? quiz.questions.map((q, k) => {
     const ans = a.answers.find(x => x.qi === k);
     return `<tr><td class="num">${k + 1}</td><td><b>${esc(q.topic)}</b><br><span class="muted" style="font-size:13px">${esc(quiz.layers[q.l].name)}</span></td>
       <td>${ans ? `<span class="mk ${ans.ok ? "ok" : "no"}">${ans.ok ? "✓" : "✗"}</span> ${rich(q.o[ans.chosen])}` : "—"}</td>
-      <td>${ans && ans.ok ? `<span class="muted">Same</span>` : rich(q.o[q.a])}</td><td class="num">${esc(q.t)}</td></tr>`;
+      <td>${ans && ans.ok ? `<span class="muted">Same</span>` : rich(q.o[q.a])}</td></tr>`;
   }).join("") : "";
   view(`
     <div class="print-head">lakhshit.in · Learning Lab — Quiz report</div>
@@ -240,8 +240,8 @@ function reportView(id, fresh) {
       ${quiz ? `<div class="bars">${Object.entries(quiz.layers).map(([k, L]) => { const b = a.byLayer?.[k] || { r: 0, n: 0 }; return `<div class="bar"><span>${esc(L.name)}</span><div class="t"><div style="width:${b.n ? b.r / b.n * 100 : 0}%;background:var(${L.color})"></div></div><span class="n">${b.r}/${b.n}</span></div>`; }).join("")}</div>` : ""}
     </section>
     ${quiz ? `<section class="card"><h2>Question by question</h2>
-      <div class="tablewrap"><table><thead><tr><th>#</th><th>Topic</th><th>Answer given</th><th>Correct answer</th><th>Video at</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <p class="muted" style="margin:0;font-size:14px">Review missed questions at the times shown in <a href="${quiz.video}" target="_blank" rel="noopener">the primer video</a>.</p>
+      <div class="tablewrap"><table><thead><tr><th>#</th><th>Topic</th><th>Answer given</th><th>Correct answer</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="muted" style="margin:0;font-size:14px">Missed a few? Rewatch <a href="${quiz.video}" target="_blank" rel="noopener">the primer video</a>, then retake the quiz.</p>
     </section>` : ""}
     <div class="row no-print"><a class="btn ghost" href="#/">← My quizzes</a></div>`);
   document.getElementById("print").onclick = () => window.print();
