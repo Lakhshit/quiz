@@ -172,7 +172,7 @@ function answer(quiz, o) {
   $app.querySelectorAll(".opt").forEach(b => { const n = +b.dataset.o; b.disabled = true; b.classList.add(n === q.a ? "right" : n === o ? "wrong" : "dim"); });
   $app.querySelector(".prog").outerHTML = progress(quiz);
   const last = r.i === quiz.questions.length - 1;
-  document.getElementById("after").innerHTML = `<div class="explain ${ok ? "ok" : "no"}"><b>${ok ? "Correct" : "Not quite"}</b>${rich(q.e)}<span class="at">Explained in the video at ${esc(q.t)}</span></div>
+  document.getElementById("after").innerHTML = `<div class="explain ${ok ? "ok" : "no"}"><b>${ok ? "Correct" : "Not quite"}</b>${rich(q.e)}</div>
     <div class="row" style="margin-top:14px"><span></span><button class="btn" id="next">${last ? "Finish and see report" : "Next question →"}</button></div>`;
   const n = document.getElementById("next"); n.focus({ preventScroll: true });
   n.onclick = () => { r.i++; drawQuestion(quiz); };
