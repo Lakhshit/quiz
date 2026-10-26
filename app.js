@@ -1,56 +1,63 @@
-import { createBackend, isAdminName, AppError } from "./backend.js";
+import { backend as B, AppError, hashPassword, makePassword } from "./backend.js";
 import { QUIZZES } from "./quizzes.js";
-import { PASS_MARK } from "./config.js";
+import { PASS_MARK, REQUEST_TO, ADMIN_NAME } from "./config.js";
 
 const $app = document.getElementById("app");
 const $who = document.getElementById("who");
-const S = { be: null, user: null, profile: null, admin: false, run: null };
+const S = { me: null, run: null };
 
 // ───────── helpers ─────────
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const rich = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
 const fmtDate = (ms) => ms ? new Date(ms).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
-const shortDate = (ms) => ms ? new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—";
 const quizById = (id) => QUIZZES.find(q => q.id === id);
 const shuffle = (a) => { a = a.slice(); for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; } return a; };
-const go = (h) => { if (location.hash === h) render(); else location.hash = h; };
-const view = (html) => { $app.innerHTML = `<div class="stack fade">${html}</div>`; labelTables(); window.scrollTo({ top: 0 }); };
-// Copies each column header into its cells so tables can stack into cards on phones.
-function labelTables() { $app.querySelectorAll("table").forEach(t => { const h = [...t.querySelectorAll("thead th")].map(th => th.textContent.trim()); t.querySelectorAll("tbody tr").forEach(r => [...r.children].forEach((td, i) => { if (h[i] && !td.hasAttribute("colspan")) td.dataset.label = h[i]; })); }); }
 const passed = (pct) => pct >= PASS_MARK;
 const resultPill = (pct) => passed(pct) ? `<span class="pill ok">Passed</span>` : `<span class="pill bad">Not yet</span>`;
-const statusPill = (s) => ({ approved: `<span class="pill ok">Approved</span>`, pending: `<span class="pill warn">Pending</span>`, rejected: `<span class="pill bad">Declined</span>` }[s] || esc(s));
+const mailto = (subject, body) => `mailto:${REQUEST_TO}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+const fail = (e) => { if (!(e instanceof AppError)) console.error(e); return e instanceof AppError ? e.message : "Something went wrong. Try again."; };
+function view(html) { $app.innerHTML = `<div class="stack fade">${html}</div>`; labelTables(); window.scrollTo({ top: 0 }); }
+// Copies each column header into its cells so tables can stack into cards on phones.
+function labelTables() { $app.querySelectorAll("table").forEach(t => { const h = [...t.querySelectorAll("thead th")].map(th => th.textContent.trim()); t.querySelectorAll("tbody tr").forEach(r => [...r.children].forEach((td, i) => { if (h[i] && !td.hasAttribute("colspan")) td.dataset.label = h[i]; })); }); }
 function busy(btn, on, label) { if (!btn) return; if (on) { btn.dataset.l = btn.textContent; btn.textContent = label || "Working…"; btn.disabled = true; } else { btn.textContent = btn.dataset.l || btn.textContent; btn.disabled = false; } }
-function fail(e) { if (!(e instanceof AppError)) console.error(e); return e instanceof AppError ? e.message : "Something went wrong. Try again."; }
-
-function header() {
-  if (!S.profile) { $who.innerHTML = ""; return; }
-  $who.innerHTML = `<span>Signed in as <b>${esc(S.profile.name || S.profile.username)}</b></span>
-    ${S.admin ? `<a href="#/admin">Admin</a>` : ""}<a href="#/">My quizzes</a><button id="signout" type="button">Sign out</button>`;
-  document.getElementById("signout").onclick = async () => { S.run = null; await S.be.signOut(); location.hash = "#/"; };
+function copyButton(btn, getText) {
+  btn.onclick = async () => {
+    const t = getText();
+    try { await navigator.clipboard.writeText(t); btn.textContent = "Copied"; }
+    catch { const ta = btn.closest(".card").querySelector("textarea"); if (ta) { ta.focus(); ta.select(); } btn.textContent = "Press Ctrl+C to copy"; }
+    setTimeout(() => { btn.textContent = btn.dataset.l || "Copy"; }, 2000);
+  };
+  btn.dataset.l = btn.textContent;
 }
 
-// ───────── auth ─────────
+function header() {
+  if (!S.me) { $who.innerHTML = ""; return; }
+  $who.innerHTML = `<span>Signed in as <b>${esc(S.me.name)}</b></span>
+    ${S.me.role === "admin" ? `<a href="#/admin">Admin</a>` : ""}<a href="#/">My quizzes</a><button id="signout" type="button">Sign out</button>`;
+  document.getElementById("signout").onclick = () => { S.run = null; S.me = null; B.signOut(); location.hash = "#/"; render(); };
+}
+
+// ───────── sign in / request access ─────────
 function authView(mode = "signin") {
   $who.innerHTML = "";
   const q = QUIZZES[0];
   view(`
-  <section class="hero" style="max-width:560px;margin:0 auto;text-align:left">
+  <section class="hero" style="max-width:560px;margin:0 auto">
     <div class="kicker">System design primers · Knowledge checks</div>
     <h1>Learn it. <em>Prove it.</em></h1>
-    <p class="muted" style="margin:0">Watch the primer, then test what stuck. Sign in with the username your admin approved, or request access.</p>
+    <p class="muted" style="margin:0">Watch the primer, then test what stuck. Sign in with the login ${esc(ADMIN_NAME)} sent you, or request access.</p>
   </section>
   <section class="card auth">
     <div class="tabs" role="tablist">
       <button role="tab" id="t-in" aria-selected="${mode === "signin"}">Sign in</button>
-      <button role="tab" id="t-up" aria-selected="${mode === "register"}">Request access</button>
+      <button role="tab" id="t-up" aria-selected="${mode !== "signin"}">Request access</button>
     </div>
-    <div id="form-slot"></div>
+    <div id="slot"></div>
   </section>
   <p class="muted" style="text-align:center;font-size:14px;margin:0">Now available: <b>${esc(q.title)}</b> · ${q.questions.length} questions</p>`);
   document.getElementById("t-in").onclick = () => authView("signin");
-  document.getElementById("t-up").onclick = () => authView("register");
-  const slot = document.getElementById("form-slot");
+  document.getElementById("t-up").onclick = () => authView("request");
+  const slot = document.getElementById("slot");
 
   if (mode === "signin") {
     slot.innerHTML = `<form id="f" novalidate>
@@ -59,61 +66,53 @@ function authView(mode = "signin") {
       <div id="msg"></div>
       <button class="btn" id="go">Sign in</button>
     </form>`;
-  } else {
-    slot.innerHTML = `<form id="f" novalidate>
-      <label>Full name<input id="n" autocomplete="name" required></label>
-      <label>Username <small>3–20 characters: letters, numbers, dot, dash or underscore</small><input id="u" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
-      <label>Work email <small>Optional, so the admin can reach you</small><input id="e" type="email" autocomplete="email"></label>
-      <label>Password <small>At least 8 characters</small><input id="p" type="password" autocomplete="new-password" required></label>
-      <label>Confirm password<input id="p2" type="password" autocomplete="new-password" required></label>
-      <div id="msg"></div>
-      <button class="btn" id="go">Request access</button>
-    </form>`;
+    const f = document.getElementById("f"); f.querySelector("input").focus();
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const msg = document.getElementById("msg"), btn = document.getElementById("go");
+      const u = document.getElementById("u").value.trim(), p = document.getElementById("p").value;
+      if (!u || !p) { msg.innerHTML = `<div class="err">Enter your username and password.</div>`; return; }
+      busy(btn, true, "Signing in…");
+      try { await B.signIn(u, p); S.me = await B.current(); location.hash = "#/"; render(); }
+      catch (e) { msg.innerHTML = `<div class="err">${esc(fail(e))}</div>`; busy(btn, false); }
+    };
+    return;
   }
-  const f = document.getElementById("f");
-  f.querySelector("input").focus();
-  f.onsubmit = async (ev) => {
+
+  if (mode === "sent") {
+    slot.innerHTML = `<div class="stack" style="gap:12px">
+      <div class="note">Your email app has opened with the request. Press <b>Send</b> there. ${esc(ADMIN_NAME)} will reply with your username and password.</div>
+      <p class="muted" style="margin:0;font-size:14px">Email app didn't open? Send your request to <b style="user-select:all">${esc(REQUEST_TO)}</b>.</p>
+      <button class="btn ghost" id="back">Back to sign in</button></div>`;
+    document.getElementById("back").onclick = () => authView("signin");
+    return;
+  }
+
+  slot.innerHTML = `<form id="f" novalidate>
+    <label>Full name<input id="n" autocomplete="name" required></label>
+    <label>Work email<input id="e" type="email" autocomplete="email" required></label>
+    <label>Preferred username <small>Letters, numbers, dot or dash</small><input id="u" autocapitalize="none" spellcheck="false"></label>
+    <label>Team or role <small>Optional</small><input id="t"></label>
+    <div id="msg"></div>
+    <button class="btn" id="go">Email my request</button>
+    <p class="muted" style="margin:0;font-size:13px">This opens your email app with the request to ${esc(ADMIN_NAME)}. You'll get your login by reply once approved.</p>
+  </form>`;
+  const f = document.getElementById("f"); f.querySelector("input").focus();
+  f.onsubmit = (ev) => {
     ev.preventDefault();
-    const msg = document.getElementById("msg"), btn = document.getElementById("go");
-    const val = (id) => (document.getElementById(id)?.value || "").trim();
-    const u = val("u").toLowerCase(), p = document.getElementById("p").value;
-    const say = (t) => { msg.innerHTML = `<div class="err">${esc(t)}</div>`; };
-    if (!u || !p) return say("Enter your username and password.");
-    if (mode === "register") {
-      if (!val("n")) return say("Enter your full name.");
-      if (!/^[a-z0-9._-]{3,20}$/.test(u)) return say("Username must be 3–20 characters: letters, numbers, dot, dash or underscore.");
-      if (p.length < 8) return say("Use a password with at least 8 characters.");
-      if (p !== document.getElementById("p2").value) return say("The two passwords don't match.");
-    }
-    busy(btn, true, mode === "register" ? "Sending request…" : "Signing in…");
-    try {
-      if (mode === "register") await S.be.register({ username: u, name: val("n"), email: val("e"), password: p });
-      else await S.be.signIn(u, p);
-    } catch (e) { say(fail(e)); busy(btn, false); }
+    const v = (id) => document.getElementById(id).value.trim();
+    const msg = document.getElementById("msg");
+    if (!v("n") || !v("e")) { msg.innerHTML = `<div class="err">Enter your name and work email.</div>`; return; }
+    if (!/^\S+@\S+\.\S+$/.test(v("e"))) { msg.innerHTML = `<div class="err">Enter a valid email address.</div>`; return; }
+    const body = `Hi ${ADMIN_NAME.split(" ")[0]},\n\nPlease give me access to the Learning Lab quizzes at quiz.lakhshit.in.\n\nName: ${v("n")}\nEmail: ${v("e")}\nPreferred username: ${v("u") || "(any)"}\nTeam / role: ${v("t") || "-"}\n\nThanks,\n${v("n")}`;
+    location.href = mailto(`Quiz access request: ${v("n")}`, body);
+    setTimeout(() => authView("sent"), 400);
   };
 }
 
-function pendingView() {
-  const p = S.profile;
-  const declined = p.status === "rejected";
-  view(`<section class="card auth" style="text-align:left">
-    <div class="kicker">${declined ? "Access declined" : "Request received"}</div>
-    <h2>${declined ? "Your access request was declined" : `Thanks, ${esc(p.name || p.username)}. You're on the list.`}</h2>
-    <p class="muted" style="margin:0">${declined
-      ? "Contact the Learning Lab admin if you think this is a mistake."
-      : "An admin needs to approve your account before you can take quizzes. This page updates when you check again."}</p>
-    <div class="facts"><div class="fact"><small>Username</small><b>${esc(p.username)}</b></div><div class="fact"><small>Requested</small><b>${shortDate(p.createdAt)}</b></div><div class="fact"><small>Status</small><b>${statusPill(p.status)}</b></div></div>
-    ${declined ? "" : `<div class="row"><span></span><button class="btn" id="chk">Check again</button></div>`}
-  </section>`);
-  const b = document.getElementById("chk");
-  if (b) b.onclick = async () => { busy(b, true, "Checking…"); S.profile = await S.be.getProfile(S.user.uid); render(); };
-}
-
 // ───────── dashboard ─────────
-async function homeView() {
-  view(`<p class="muted loading">Loading your quizzes…</p>`);
-  let mine = [];
-  try { mine = (await S.be.myAttempts(S.user.uid)).sort((a, b) => b.at - a.at); } catch (e) { console.error(e); }
+function homeView() {
+  const mine = B.myAttempts(S.me.username).sort((a, b) => b.at - a.at);
   const cards = QUIZZES.map(q => {
     const tries = mine.filter(a => a.quizId === q.id);
     const best = tries.length ? Math.max(...tries.map(a => a.pct)) : null;
@@ -134,15 +133,15 @@ async function homeView() {
   const hist = mine.length ? `<div class="tablewrap"><table><thead><tr><th>Date</th><th>Quiz</th><th>Score</th><th>Result</th><th></th></tr></thead><tbody>
       ${mine.map(a => `<tr><td class="num">${fmtDate(a.at)}</td><td>${esc(a.quizTitle)}</td><td class="num">${a.score}/${a.total} · ${a.pct}%</td><td>${resultPill(a.pct)}</td><td><a href="#/report/${a.id}">View report</a></td></tr>`).join("")}
     </tbody></table></div>` : `<p class="empty">No attempts yet. Your reports will appear here.</p>`;
-  view(`<section class="hero"><div class="kicker">Welcome back</div><h1>Hi ${esc((S.profile.name || S.profile.username).split(" ")[0])}, <em>ready?</em></h1></section>
+  view(`<section class="hero"><div class="kicker">Welcome</div><h1>Hi ${esc(S.me.name.split(" ")[0])}, <em>ready?</em></h1></section>
     ${cards}
-    <section class="card"><h2>My results</h2>${hist}</section>`);
+    <section class="card"><h2>My results</h2>${hist}<p class="muted" style="margin:0;font-size:13px">Results are saved in this browser. Each report has a button to send it to ${esc(ADMIN_NAME)}.</p></section>`);
 }
 
 // ───────── quiz ─────────
 function quizView(id) {
   const quiz = quizById(id);
-  if (!quiz) return go("#/");
+  if (!quiz) { location.hash = "#/"; return; }
   if (!S.run || S.run.quizId !== id || S.run.done) S.run = { quizId: id, i: 0, answers: [], order: [], started: Date.now() };
   drawQuestion(quiz);
 }
@@ -155,7 +154,7 @@ function drawQuestion(quiz) {
   const r = S.run;
   if (r.i >= quiz.questions.length) return finish(quiz);
   const q = quiz.questions[r.i], L = quiz.layers[q.l];
-  r.order = shuffle([0, 1, 2, 3].slice(0, q.o.length));
+  r.order = shuffle(q.o.map((_, k) => k));
   view(`${progress(quiz)}
     <section class="card" aria-live="polite">
       <div class="meta"><span class="tag" style="--c:var(${L.color})">${esc(L.name)} · ${esc(q.topic)}</span><span>${esc(quiz.title)}</span></div>
@@ -163,7 +162,7 @@ function drawQuestion(quiz) {
       <div class="opts">${r.order.map((o, k) => `<button class="opt" id="opt${k}" data-o="${o}"><span class="k">${k + 1}</span><span>${rich(q.o[o])}</span></button>`).join("")}</div>
       <div id="after"></div>
     </section>
-    <p class="hint" style="text-align:center">Press 1–${q.o.length} to answer · Enter for next</p>`);
+    <p class="hint" style="text-align:center">Press 1–${q.o.length} to answer</p>`);
   $app.querySelectorAll(".opt").forEach(b => b.onclick = () => answer(quiz, +b.dataset.o));
 }
 function answer(quiz, o) {
@@ -178,155 +177,142 @@ function answer(quiz, o) {
   const n = document.getElementById("next"); n.focus({ preventScroll: true });
   n.onclick = () => { r.i++; drawQuestion(quiz); };
 }
-async function finish(quiz) {
+function finish(quiz) {
   const r = S.run; r.done = true;
   const score = r.answers.filter(a => a.ok).length, total = quiz.questions.length, pct = Math.round(score / total * 100);
   const byLayer = {};
   quiz.questions.forEach((q, k) => { byLayer[q.l] ??= { r: 0, n: 0 }; byLayer[q.l].n++; if (r.answers[k]?.ok) byLayer[q.l].r++; });
-  const attempt = { uid: S.user.uid, username: S.profile.username, name: S.profile.name || "", quizId: quiz.id, quizTitle: quiz.title,
-    score, total, pct, passed: passed(pct), byLayer, answers: r.answers.map(a => ({ qi: a.qi, chosen: a.chosen, ok: a.ok })),
-    seconds: Math.round((Date.now() - r.started) / 1000), at: Date.now() };
-  view(`<p class="muted loading">Saving your result…</p>`);
-  try { const id = await S.be.saveAttempt(attempt); S.run = null; go(`#/report/${id}`); }
-  catch (e) { reportView(null, { ...attempt, id: null }, fail(e)); }
+  const id = B.saveAttempt({ username: S.me.username, name: S.me.name, quizId: quiz.id, quizTitle: quiz.title, score, total, pct, byLayer,
+    answers: r.answers.map(a => ({ qi: a.qi, chosen: a.chosen, ok: a.ok })), seconds: Math.round((Date.now() - r.started) / 1000), at: Date.now() });
+  S.run = null;
+  location.hash = `#/report/${id}?new`;
 }
 
 // ───────── report ─────────
-async function reportView(id, preset, saveError) {
-  let a = preset;
-  if (!a) {
-    view(`<p class="muted loading">Loading report…</p>`);
-    try { a = await S.be.getAttempt(id); } catch (e) { return view(`<section class="card"><div class="err">${esc(fail(e))}</div></section>`); }
-    if (!a) return view(`<section class="card"><h2>Report not found</h2><p class="muted">It may have been removed.</p><a class="btn ghost" href="#/">Back to my quizzes</a></section>`);
-  }
+function resultEmail(a, quiz) {
+  const L = quiz.layers;
+  const missed = quiz.questions.map((q, k) => ({ q, ans: a.answers.find(x => x.qi === k) })).filter(x => !x.ans || !x.ans.ok);
+  const body = `Quiz result — ${a.quizTitle}\n\nName: ${a.name}\nUsername: ${a.username}\nTaken: ${fmtDate(a.at)}\nTime spent: ${Math.floor(a.seconds / 60)}m ${a.seconds % 60}s\n\n` +
+    `Score: ${a.score}/${a.total} (${a.pct}%) — ${passed(a.pct) ? "PASSED" : "NOT YET PASSED"} (pass mark ${PASS_MARK}%)\n\n` +
+    `By section:\n${Object.entries(L).map(([k, l]) => `- ${l.name}: ${a.byLayer?.[k]?.r ?? 0}/${a.byLayer?.[k]?.n ?? 0}`).join("\n")}\n\n` +
+    (missed.length ? `Missed (${missed.length}):\n${missed.map(x => `- Q${quiz.questions.indexOf(x.q) + 1} ${x.q.topic} (video ${x.q.t})`).join("\n")}` : "All questions correct.") +
+    `\n\nSent from quiz.lakhshit.in`;
+  return mailto(`Quiz result: ${a.name} — ${a.pct}% (${a.quizTitle})`, body);
+}
+
+function reportView(id, fresh) {
+  const a = B.getAttempt(id);
+  if (!a) return view(`<section class="card"><h2>Report not found</h2><p class="muted" style="margin:0">Reports are saved in the browser where the quiz was taken.</p><a class="btn ghost" href="#/">Back to my quizzes</a></section>`);
   const quiz = quizById(a.quizId);
   const C = 2 * Math.PI * 50, col = passed(a.pct) ? "var(--ok)" : a.pct >= 60 ? "var(--l-ops)" : "var(--bad)";
   const v = passed(a.pct) ? ["Passed.", "Strong grasp of how the pieces connect."] : a.pct >= 60 ? ["Nearly there.", "Rewatch the moments listed for the questions you missed, then retake."] : ["Worth a second watch.", "Use the video times below to review, then retake."];
-  const mins = a.seconds ? `${Math.floor(a.seconds / 60)}m ${a.seconds % 60}s` : "—";
-  const own = a.uid === S.user.uid;
   const rows = quiz ? quiz.questions.map((q, k) => {
     const ans = a.answers.find(x => x.qi === k);
-    const L = quiz.layers[q.l];
-    return `<tr><td class="num">${k + 1}</td><td><b>${esc(q.topic)}</b><br><span class="muted" style="font-size:13px">${esc(L.name)}</span></td>
+    return `<tr><td class="num">${k + 1}</td><td><b>${esc(q.topic)}</b><br><span class="muted" style="font-size:13px">${esc(quiz.layers[q.l].name)}</span></td>
       <td>${ans ? `<span class="mk ${ans.ok ? "ok" : "no"}">${ans.ok ? "✓" : "✗"}</span> ${rich(q.o[ans.chosen])}` : "—"}</td>
       <td>${ans && ans.ok ? `<span class="muted">Same</span>` : rich(q.o[q.a])}</td><td class="num">${esc(q.t)}</td></tr>`;
   }).join("") : "";
   view(`
-    ${saveError ? `<div class="err">Your result could not be saved: ${esc(saveError)} Take a screenshot of this report.</div>` : ""}
     <div class="print-head">lakhshit.in · Learning Lab — Quiz report</div>
+    ${fresh && quiz ? `<section class="card no-print" style="border-color:var(--accent)">
+      <div class="row"><div><h3>Send your result to ${esc(ADMIN_NAME)}</h3><p class="muted" style="margin:4px 0 0;font-size:14px">Opens your email app with your score and the questions you missed. Press Send there.</p></div>
+      <a class="btn" href="${resultEmail(a, quiz)}">Email my result</a></div></section>` : ""}
     <section class="card">
       <div class="row"><div class="kicker">Result report</div><div class="actions no-print">
+        ${quiz && !fresh ? `<a class="btn sm ghost" href="${resultEmail(a, quiz)}">Email result</a>` : ""}
         <button class="btn sm ghost" id="print">Print or save PDF</button>
-        ${own && quiz ? `<a class="btn sm" href="#/quiz/${quiz.id}">Retake</a>` : ""}
+        ${quiz ? `<a class="btn sm" href="#/quiz/${quiz.id}">Retake</a>` : ""}
       </div></div>
       <div class="res-top">
         <svg class="ring" viewBox="0 0 120 120" role="img" aria-label="${a.pct} percent"><circle cx="60" cy="60" r="50" fill="none" stroke="var(--line)" stroke-width="10"/><circle cx="60" cy="60" r="50" fill="none" stroke="${col}" stroke-width="10" stroke-linecap="round" stroke-dasharray="${C * a.pct / 100} ${C}" transform="rotate(-90 60 60)"/><text class="pct" x="60" y="60" text-anchor="middle" font-size="28">${a.pct}%</text><text class="sub" x="60" y="80" text-anchor="middle" font-size="13">${a.score} / ${a.total}</text></svg>
         <div class="verdict"><span class="big">${v[0]}</span><span class="muted">${v[1]}</span></div>
       </div>
       <div class="facts">
-        <div class="fact"><small>Name</small><b>${esc(a.name || a.username)}</b></div>
+        <div class="fact"><small>Name</small><b>${esc(a.name)}</b></div>
         <div class="fact"><small>Username</small><b>${esc(a.username)}</b></div>
         <div class="fact"><small>Quiz</small><b>${esc(a.quizTitle)}</b></div>
         <div class="fact"><small>Taken</small><b>${fmtDate(a.at)}</b></div>
-        <div class="fact"><small>Time spent</small><b>${mins}</b></div>
+        <div class="fact"><small>Time spent</small><b>${Math.floor(a.seconds / 60)}m ${a.seconds % 60}s</b></div>
         <div class="fact"><small>Result</small><b>${resultPill(a.pct)}</b></div>
       </div>
       ${quiz ? `<div class="bars">${Object.entries(quiz.layers).map(([k, L]) => { const b = a.byLayer?.[k] || { r: 0, n: 0 }; return `<div class="bar"><span>${esc(L.name)}</span><div class="t"><div style="width:${b.n ? b.r / b.n * 100 : 0}%;background:var(${L.color})"></div></div><span class="n">${b.r}/${b.n}</span></div>`; }).join("")}</div>` : ""}
     </section>
     ${quiz ? `<section class="card"><h2>Question by question</h2>
       <div class="tablewrap"><table><thead><tr><th>#</th><th>Topic</th><th>Answer given</th><th>Correct answer</th><th>Video at</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <p class="muted" style="margin:0;font-size:14px">Review any missed question at the time shown in <a href="${quiz.video}" target="_blank" rel="noopener">the primer video</a>.</p>
+      <p class="muted" style="margin:0;font-size:14px">Review missed questions at the times shown in <a href="${quiz.video}" target="_blank" rel="noopener">the primer video</a>.</p>
     </section>` : ""}
-    <div class="row no-print"><a class="btn ghost" href="${S.admin && !own ? "#/admin" : "#/"}">← Back</a></div>`);
+    <div class="row no-print"><a class="btn ghost" href="#/">← My quizzes</a></div>`);
   document.getElementById("print").onclick = () => window.print();
 }
 
 // ───────── admin ─────────
-async function adminView(tab = sessionStorage.getItem("adminTab") || "pending") {
-  if (!S.admin) return go("#/");
-  view(`<p class="muted loading">Loading admin dashboard…</p>`);
-  let users = [], attempts = [];
-  try { [users, attempts] = await Promise.all([S.be.listUsers(), S.be.allAttempts()]); }
-  catch (e) { return view(`<section class="card"><div class="err">${esc(fail(e))}</div><p class="muted">Check that firestore.rules is published and your username is in ADMIN_EMAILS.</p></section>`); }
-  attempts.sort((a, b) => b.at - a.at);
-  const pending = users.filter(u => u.status === "pending").sort((a, b) => a.createdAt - b.createdAt);
-  const members = users.filter(u => u.status !== "pending").sort((a, b) => (a.name || a.username).localeCompare(b.name || b.username));
-  const avg = attempts.length ? Math.round(attempts.reduce((s, a) => s + a.pct, 0) / attempts.length) : 0;
-  const passRate = attempts.length ? Math.round(attempts.filter(a => passed(a.pct)).length / attempts.length * 100) : 0;
-  const statsFor = (uid) => { const t = attempts.filter(a => a.uid === uid); return { n: t.length, best: t.length ? Math.max(...t.map(a => a.pct)) : null }; };
+async function adminView() {
+  if (S.me.role !== "admin") { location.hash = "#/"; return; }
+  let members = [];
+  try { members = (await (await fetch("users.json", { cache: "no-store" })).json()).users || []; } catch {}
+  view(`<section class="hero"><div class="kicker">Admin</div><h1>Learning Lab <em>members</em></h1>
+      <p class="muted" style="margin:0">Access requests and quiz results arrive by email at <b>${esc(REQUEST_TO)}</b>.</p></section>
 
-  const tabs = [["pending", `Pending requests${pending.length ? `<span class="badge">${pending.length}</span>` : ""}`], ["members", "Members"], ["results", "Results"]];
-  let body = "";
-  if (tab === "pending") {
-    body = pending.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Requested</th><th></th></tr></thead><tbody>
-      ${pending.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.username)}</td><td>${esc(u.email) || "—"}</td><td class="num">${fmtDate(u.createdAt)}</td>
-        <td><div class="actions"><button class="btn sm" data-act="approved" data-uid="${esc(u.uid)}">Approve</button><button class="btn sm danger" data-act="rejected" data-uid="${esc(u.uid)}">Decline</button></div></td></tr>`).join("")}
-      </tbody></table></div>` : `<p class="empty">No one is waiting. New requests appear here.</p>`;
-  } else if (tab === "members") {
-    body = members.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Username</th><th>Status</th><th>Attempts</th><th>Best</th><th></th></tr></thead><tbody>
-      ${members.map(u => { const st = statsFor(u.uid); return `<tr><td>${esc(u.name)}${isAdminName(u.username) ? ` <span class="pill ok">Admin</span>` : ""}<br><span class="muted" style="font-size:13px">${esc(u.email)}</span></td><td>${esc(u.username)}</td><td>${statusPill(u.status)}</td><td class="num">${st.n}</td><td class="num">${st.best === null ? "—" : st.best + "%"}</td>
-        <td>${isAdminName(u.username) ? "" : u.status === "approved" ? `<button class="btn sm danger" data-act="rejected" data-uid="${esc(u.uid)}">Remove access</button>` : `<button class="btn sm ghost" data-act="approved" data-uid="${esc(u.uid)}">Approve</button>`}</td></tr>`; }).join("")}
-      </tbody></table></div>` : `<p class="empty">No members yet.</p>`;
-  } else {
-    body = `<div class="toolbar"><input id="filter" placeholder="Filter by name or username" aria-label="Filter results"><button class="btn sm ghost" id="csv">Download CSV</button></div>
-      <div class="tablewrap"><table><thead><tr><th>Date</th><th>Name</th><th>Quiz</th><th>Score</th><th>Result</th><th></th></tr></thead><tbody id="rows">
-      ${attempts.length ? attempts.map(a => `<tr data-k="${esc((a.name + " " + a.username).toLowerCase())}"><td class="num">${fmtDate(a.at)}</td><td>${esc(a.name || a.username)}<br><span class="muted" style="font-size:13px">${esc(a.username)}</span></td><td>${esc(a.quizTitle)}</td><td class="num">${a.score}/${a.total} · ${a.pct}%</td><td>${resultPill(a.pct)}</td><td><a href="#/report/${esc(a.id)}">Report</a></td></tr>`).join("") : `<tr><td colspan="6" class="empty">No quiz attempts yet.</td></tr>`}
-      </tbody></table></div>`;
-  }
-
-  view(`<section class="hero"><div class="kicker">Admin dashboard</div><h1>Learning Lab <em>overview</em></h1></section>
-    <div class="tiles">
-      <div class="tile ${pending.length ? "alert" : ""}"><small>Pending</small><b>${pending.length}</b></div>
-      <div class="tile"><small>Members</small><b>${users.filter(u => u.status === "approved").length}</b></div>
-      <div class="tile"><small>Attempts</small><b>${attempts.length}</b></div>
-      <div class="tile"><small>Avg score</small><b>${attempts.length ? avg + "%" : "—"}</b></div>
-      <div class="tile"><small>Pass rate</small><b>${attempts.length ? passRate + "%" : "—"}</b></div>
-    </div>
     <section class="card">
-      <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" data-tab="${k}" aria-selected="${k === tab}">${l}</button>`).join("")}</div>
-      <div id="msg"></div>
-      ${body}
+      <h2>Approve someone: add a member</h2>
+      <form id="f" novalidate>
+        <label>Full name<input id="n" required></label>
+        <label>Username <small>Lowercase letters, numbers, dot or dash</small><input id="u" autocapitalize="none" spellcheck="false" required></label>
+        <label>Password <small>Generated for you; you can type your own</small><input id="p" required></label>
+        <label style="flex-direction:row;align-items:center;gap:8px;font-weight:400"><input id="adm" type="checkbox" style="width:auto"> Make this person an admin</label>
+        <div id="msg"></div>
+        <button class="btn" id="go">Create entry</button>
+      </form>
+      <div id="out"></div>
+    </section>
+
+    <section class="card">
+      <h2>Current members (${members.length})</h2>
+      <div class="tablewrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th></tr></thead><tbody>
+        ${members.map(m => `<tr><td>${esc(m.name)}</td><td>${esc(m.u)}</td><td>${m.role === "admin" ? `<span class="pill ok">Admin</span>` : "Member"}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">No members yet.</td></tr>`}
+      </tbody></table></div>
+      <p class="muted" style="margin:0;font-size:14px">To remove someone, delete their line from <code>users.json</code> on GitHub. They are signed out the next time they open the site.</p>
     </section>`);
 
-  $app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { sessionStorage.setItem("adminTab", b.dataset.tab); adminView(b.dataset.tab); });
-  $app.querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
-    busy(b, true, "Saving…");
-    try { await S.be.setStatus(b.dataset.uid, b.dataset.act); adminView(tab); }
-    catch (e) { document.getElementById("msg").innerHTML = `<div class="err">${esc(fail(e))}</div>`; busy(b, false); }
-  });
-  const f = document.getElementById("filter");
-  if (f) f.oninput = () => { const t = f.value.trim().toLowerCase(); document.querySelectorAll("#rows tr[data-k]").forEach(r => r.hidden = t && !r.dataset.k.includes(t)); };
-  const csv = document.getElementById("csv");
-  if (csv) csv.onclick = () => {
-    const L = QUIZZES[0].layers;
-    const head = ["Date", "Name", "Username", "Quiz", "Score", "Total", "Percent", "Result", "Minutes", ...Object.values(L).map(l => l.name)];
-    const lines = [head, ...attempts.map(a => [new Date(a.at).toISOString(), a.name, a.username, a.quizTitle, a.score, a.total, a.pct, passed(a.pct) ? "Passed" : "Not yet", a.seconds ? (a.seconds / 60).toFixed(1) : "",
-      ...Object.keys(L).map(k => a.byLayer?.[k] ? `${a.byLayer[k].r}/${a.byLayer[k].n}` : "")])]
-      .map(r => r.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(","));
-    const url = URL.createObjectURL(new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv" }));
-    const link = Object.assign(document.createElement("a"), { href: url, download: `quiz-results-${new Date().toISOString().slice(0, 10)}.csv` });
-    document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  document.getElementById("p").value = makePassword();
+  const f = document.getElementById("f");
+  f.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const v = (id) => document.getElementById(id).value.trim();
+    const msg = document.getElementById("msg"), btn = document.getElementById("go");
+    const u = v("u").toLowerCase();
+    if (!v("n")) return msg.innerHTML = `<div class="err">Enter the person's name.</div>`;
+    if (!/^[a-z0-9._-]{3,20}$/.test(u)) return msg.innerHTML = `<div class="err">Username must be 3–20 characters: lowercase letters, numbers, dot, dash or underscore.</div>`;
+    if (members.some(m => m.u === u)) return msg.innerHTML = `<div class="err">That username is already in users.json.</div>`;
+    if (v("p").length < 8) return msg.innerHTML = `<div class="err">Use a password with at least 8 characters.</div>`;
+    msg.innerHTML = ""; busy(btn, true, "Creating…");
+    const h = await hashPassword(v("p"));
+    const entry = JSON.stringify({ u, name: v("n"), role: document.getElementById("adm").checked ? "admin" : "member", ...h });
+    const welcome = `Hi ${v("n").split(" ")[0]},\n\nYou now have access to the Learning Lab quizzes.\n\nSite: https://quiz.lakhshit.in\nUsername: ${u}\nPassword: ${v("p")}\n\nWatch the primer first, then take the quiz. When you finish, use "Email my result" on the report page.\n\nThanks,\n${ADMIN_NAME}`;
+    busy(btn, false);
+    document.getElementById("out").innerHTML = `<div class="stack" style="gap:14px;margin-top:6px">
+      <div class="note"><b>Step 1.</b> On GitHub, open <code>users.json</code> → pencil icon. Add a comma after the last <code>}</code> in the list, paste this line after it, then <b>Commit changes</b>.</div>
+      <textarea id="entry" readonly rows="4" style="font:12px/1.4 var(--f-mono);width:100%;padding:10px;border:1.5px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)">${esc(entry)}</textarea>
+      <div class="row"><a class="btn sm ghost" href="https://github.com/Lakhshit/quiz/edit/main/users.json" target="_blank" rel="noopener">Open users.json on GitHub</a><button class="btn sm" id="c1" type="button">Copy line</button></div>
+      <div class="note"><b>Step 2.</b> After about a minute, send them their login:</div>
+      <textarea id="wel" readonly rows="9" style="font:13px/1.5 var(--f-body);width:100%;padding:10px;border:1.5px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)">${esc(welcome)}</textarea>
+      <div class="row"><span></span><button class="btn sm" id="c2" type="button">Copy message</button></div>
+    </div>`;
+    copyButton(document.getElementById("c1"), () => entry);
+    copyButton(document.getElementById("c2"), () => welcome);
   };
 }
 
 // ───────── router ─────────
 async function render() {
-  if (!S.user) return authView();
-  if (!S.profile) {
-    try { S.profile = await S.be.getProfile(S.user.uid); } catch (e) { console.error(e); }
-    if (!S.profile) { // profile is written right after sign-up; retry once
-      await new Promise(r => setTimeout(r, 800));
-      S.profile = await S.be.getProfile(S.user.uid).catch(() => null);
-      if (!S.profile) return view(`<section class="card auth"><div class="err">Your account profile is missing. Sign out and request access again.</div><button class="btn ghost" id="so">Sign out</button></section>`), (document.getElementById("so").onclick = () => S.be.signOut());
-    }
-    S.admin = isAdminName(S.profile.username);
-    if (S.admin && S.profile.status !== "approved") { try { await S.be.setStatus(S.user.uid, "approved"); S.profile.status = "approved"; } catch {} }
-  }
+  try { S.me = await B.current(); }
+  catch (e) { return view(`<section class="card auth"><div class="err">${esc(fail(e))}</div></section>`); }
+  if (!S.me) return authView();
   header();
-  if (!S.admin && S.profile.status !== "approved") return pendingView();
-  const [, route, arg] = (location.hash || "#/").split("/");
+  const [path, query] = (location.hash || "#/").split("?");
+  const [, route, arg] = path.split("/");
   if (route === "quiz") return quizView(arg);
-  if (route === "report") return reportView(arg);
+  if (route === "report") return reportView(arg, query === "new");
   if (route === "admin") return adminView();
   return homeView();
 }
@@ -336,15 +322,5 @@ document.addEventListener("keydown", (e) => {
   const n = +e.key;
   if (n >= 1 && n <= 4) document.getElementById("opt" + (n - 1))?.click();
 });
-
-(async () => {
-  try { S.be = await createBackend(); }
-  catch (e) { console.error(e); $app.innerHTML = `<section class="card"><div class="err">Could not connect to the quiz server. Refresh the page to try again.</div></section>`; return; }
-  if (S.be.mode === "demo") document.getElementById("demo-banner").hidden = false;
-  S.be.onAuth((u) => {
-    const changed = (u?.uid || null) !== (S.user?.uid || null);
-    S.user = u; if (changed) { S.profile = null; S.admin = false; S.run = null; }
-    render();
-  });
-  window.addEventListener("hashchange", () => { if (S.be) render(); });
-})();
+window.addEventListener("hashchange", render);
+render();
