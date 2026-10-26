@@ -1,5 +1,6 @@
 {
   "users": [
-    {"u":"lakhshit","name":"Lakhshit Kumar","role":"admin","salt":"jr2lcEPaM8HhdNbIEPk2KQ==","iter":150000,"hash":"dovofSxH385GVzPUdd0+YSyFca/neawp+ouOqZ2bZ2M="}
+    {"u":"lakhshit","name":"Lakhshit Kumar","role":"member","salt":"jr2lcEPaM8HhdNbIEPk2KQ==","iter":150000,"hash":"dovofSxH385GVzPUdd0+YSyFca/neawp+ouOqZ2bZ2M="},
+    {"u":"team","name":"GSC Team","role":"team","salt":"QPlV9Hx1dDLK5BVzu9rgDQ==","iter":150000,"hash":"qdllQ0rHA0j3WSkT7o1OjyudDQk5jTDo/4EEf2R0mJQ="}
   ]
 }

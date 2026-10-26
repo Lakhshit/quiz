@@ -11,4 +11,4 @@ export const ADMIN_NAME = "Lakhshit Kumar";
 export const PASS_MARK = 80; // percent
 
 // Accounts live in users.json (passwords are stored hashed, never in plain text).
-// Sign in as an admin and open "Admin → Add a member" to create new entries.
+// role "team" = shared login: the site asks each person for their name before the quiz.

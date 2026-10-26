@@ -4,11 +4,11 @@ Knowledge-check quizzes for engineering primers. Hosted on GitHub Pages, with a 
 
 ## How it works
 
-- **Request access:** the form opens the visitor's email app with a request to Lakhshit.
-- **Approve:** sign in as admin → **Admin** → *Add a member*. It creates a line for `users.json` (password stored hashed) and a welcome message with their login. Paste the line into `users.json` on GitHub, then send the message.
-- **Take the quiz:** members see one video link, the questions, and a result report (print / save as PDF).
-- **Results:** the report's **Email my result** button sends the score, section breakdown and missed questions to Lakhshit. Each person's own history is kept in their browser.
-- **Remove someone:** delete their line from `users.json`. They are signed out the next time they open the site.
+- **Team login:** everyone signs in with the shared `team` account. The site then asks for their name once per device, so reports and result emails carry the real person's name ("Not you?" switches person).
+- **Take the quiz:** one video link, the questions, and a result report (print / save as PDF).
+- **Results:** the report's **Email my result** button sends the score, section breakdown and missed questions to Lakhshit. Each person's history is kept in their browser.
+- **Request access:** the form emails Lakhshit, who replies with the team login.
+- **Change the team password:** replace the `team` line in `users.json` with a newly hashed one. Everyone using the old password is then refused at sign-in.
 
 ## Files
 

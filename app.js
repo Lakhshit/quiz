@@ -1,4 +1,4 @@
-import { backend as B, AppError, hashPassword, makePassword } from "./backend.js";
+import { backend as B, AppError } from "./backend.js";
 import { QUIZZES } from "./quizzes.js";
 import { PASS_MARK, REQUEST_TO, ADMIN_NAME } from "./config.js";
 
@@ -33,7 +33,9 @@ function copyButton(btn, getText) {
 function header() {
   if (!S.me) { $who.innerHTML = ""; return; }
   $who.innerHTML = `<span>Signed in as <b>${esc(S.me.name)}</b></span>
-    ${S.me.role === "admin" ? `<a href="#/admin">Admin</a>` : ""}<a href="#/">My quizzes</a><button id="signout" type="button">Sign out</button>`;
+    ${S.me.shared ? `<button id="notme" type="button">Not ${esc(S.me.name.split(" ")[0])}?</button>` : ""}<a href="#/">My quizzes</a><button id="signout" type="button">Sign out</button>`;
+  const nm = document.getElementById("notme");
+  if (nm) nm.onclick = () => { setPerson(null); S.run = null; location.hash = "#/"; render(); };
   document.getElementById("signout").onclick = () => { S.run = null; S.me = null; B.signOut(); location.hash = "#/"; render(); };
 }
 
@@ -112,7 +114,7 @@ function authView(mode = "signin") {
 
 // ───────── dashboard ─────────
 function homeView() {
-  const mine = B.myAttempts(S.me.username).sort((a, b) => b.at - a.at);
+  const mine = B.myAttempts(S.me.username).filter(a => !S.me.shared || a.name === S.me.name).sort((a, b) => b.at - a.at);
   const cards = QUIZZES.map(q => {
     const tries = mine.filter(a => a.quizId === q.id);
     const best = tries.length ? Math.max(...tries.map(a => a.pct)) : null;
@@ -245,61 +247,28 @@ function reportView(id, fresh) {
   document.getElementById("print").onclick = () => window.print();
 }
 
-// ───────── admin ─────────
-async function adminView() {
-  if (S.me.role !== "admin") { location.hash = "#/"; return; }
-  let members = [];
-  try { members = (await (await fetch("users.json", { cache: "no-store" })).json()).users || []; } catch {}
-  view(`<section class="hero"><div class="kicker">Admin</div><h1>Learning Lab <em>members</em></h1>
-      <p class="muted" style="margin:0">Access requests and quiz results arrive by email at <b>${esc(REQUEST_TO)}</b>.</p></section>
-
-    <section class="card">
-      <h2>Approve someone: add a member</h2>
-      <form id="f" novalidate>
-        <label>Full name<input id="n" required></label>
-        <label>Username <small>Lowercase letters, numbers, dot or dash</small><input id="u" autocapitalize="none" spellcheck="false" required></label>
-        <label>Password <small>Generated for you; you can type your own</small><input id="p" required></label>
-        <label style="flex-direction:row;align-items:center;gap:8px;font-weight:400"><input id="adm" type="checkbox" style="width:auto"> Make this person an admin</label>
-        <div id="msg"></div>
-        <button class="btn" id="go">Create entry</button>
-      </form>
-      <div id="out"></div>
-    </section>
-
-    <section class="card">
-      <h2>Current members (${members.length})</h2>
-      <div class="tablewrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th></tr></thead><tbody>
-        ${members.map(m => `<tr><td>${esc(m.name)}</td><td>${esc(m.u)}</td><td>${m.role === "admin" ? `<span class="pill ok">Admin</span>` : "Member"}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">No members yet.</td></tr>`}
-      </tbody></table></div>
-      <p class="muted" style="margin:0;font-size:14px">To remove someone, delete their line from <code>users.json</code> on GitHub. They are signed out the next time they open the site.</p>
-    </section>`);
-
-  document.getElementById("p").value = makePassword();
-  const f = document.getElementById("f");
-  f.onsubmit = async (ev) => {
+// ───────── who is taking it (shared team login) ─────────
+const PERSON_KEY = "lq-person";
+function getPerson() { try { return localStorage.getItem(PERSON_KEY) || ""; } catch { return ""; } }
+function setPerson(n) { try { n ? localStorage.setItem(PERSON_KEY, n) : localStorage.removeItem(PERSON_KEY); } catch {} }
+function personView() {
+  $who.innerHTML = `<button id="signout" type="button">Sign out</button>`;
+  document.getElementById("signout").onclick = () => { B.signOut(); render(); };
+  view(`<section class="card auth">
+    <div class="kicker">Before you start</div>
+    <h2>Who's taking the quiz?</h2>
+    <p class="muted" style="margin:0">Your name goes on your result report, so ${esc(ADMIN_NAME)} knows whose score it is.</p>
+    <form id="f" novalidate>
+      <label>Full name<input id="n" autocomplete="name" required></label>
+      <div id="msg"></div>
+      <button class="btn" id="go">Continue</button>
+    </form></section>`);
+  const f = document.getElementById("f"); f.querySelector("input").focus();
+  f.onsubmit = (ev) => {
     ev.preventDefault();
-    const v = (id) => document.getElementById(id).value.trim();
-    const msg = document.getElementById("msg"), btn = document.getElementById("go");
-    const u = v("u").toLowerCase();
-    if (!v("n")) return msg.innerHTML = `<div class="err">Enter the person's name.</div>`;
-    if (!/^[a-z0-9._-]{3,20}$/.test(u)) return msg.innerHTML = `<div class="err">Username must be 3–20 characters: lowercase letters, numbers, dot, dash or underscore.</div>`;
-    if (members.some(m => m.u === u)) return msg.innerHTML = `<div class="err">That username is already in users.json.</div>`;
-    if (v("p").length < 8) return msg.innerHTML = `<div class="err">Use a password with at least 8 characters.</div>`;
-    msg.innerHTML = ""; busy(btn, true, "Creating…");
-    const h = await hashPassword(v("p"));
-    const entry = JSON.stringify({ u, name: v("n"), role: document.getElementById("adm").checked ? "admin" : "member", ...h });
-    const welcome = `Hi ${v("n").split(" ")[0]},\n\nYou now have access to the Learning Lab quizzes.\n\nSite: https://quiz.lakhshit.in\nUsername: ${u}\nPassword: ${v("p")}\n\nWatch the primer first, then take the quiz. When you finish, use "Email my result" on the report page.\n\nThanks,\n${ADMIN_NAME}`;
-    busy(btn, false);
-    document.getElementById("out").innerHTML = `<div class="stack" style="gap:14px;margin-top:6px">
-      <div class="note"><b>Step 1.</b> On GitHub, open <code>users.json</code> → pencil icon. Add a comma after the last <code>}</code> in the list, paste this line after it, then <b>Commit changes</b>.</div>
-      <textarea id="entry" readonly rows="4" style="font:12px/1.4 var(--f-mono);width:100%;padding:10px;border:1.5px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)">${esc(entry)}</textarea>
-      <div class="row"><a class="btn sm ghost" href="https://github.com/Lakhshit/quiz/edit/main/users.json" target="_blank" rel="noopener">Open users.json on GitHub</a><button class="btn sm" id="c1" type="button">Copy line</button></div>
-      <div class="note"><b>Step 2.</b> After about a minute, send them their login:</div>
-      <textarea id="wel" readonly rows="9" style="font:13px/1.5 var(--f-body);width:100%;padding:10px;border:1.5px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)">${esc(welcome)}</textarea>
-      <div class="row"><span></span><button class="btn sm" id="c2" type="button">Copy message</button></div>
-    </div>`;
-    copyButton(document.getElementById("c1"), () => entry);
-    copyButton(document.getElementById("c2"), () => welcome);
+    const n = document.getElementById("n").value.trim().replace(/\s+/g, " ");
+    if (n.length < 2) { document.getElementById("msg").innerHTML = `<div class="err">Enter your full name.</div>`; return; }
+    setPerson(n.slice(0, 60)); render();
   };
 }
 
@@ -308,12 +277,16 @@ async function render() {
   try { S.me = await B.current(); }
   catch (e) { return view(`<section class="card auth"><div class="err">${esc(fail(e))}</div></section>`); }
   if (!S.me) return authView();
+  if (S.me.role === "team") {
+    const person = getPerson();
+    if (!person) return personView();
+    S.me = { ...S.me, name: person, shared: true };
+  }
   header();
   const [path, query] = (location.hash || "#/").split("?");
   const [, route, arg] = path.split("/");
   if (route === "quiz") return quizView(arg);
   if (route === "report") return reportView(arg, query === "new");
-  if (route === "admin") return adminView();
   return homeView();
 }
 
